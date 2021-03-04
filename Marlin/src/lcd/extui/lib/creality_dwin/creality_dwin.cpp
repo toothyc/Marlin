@@ -44,6 +44,10 @@
   #include "../../feature/pause.h"
 #endif
 
+#if ENABLED(FILAMENT_RUNOUT_SENSOR)
+  #include "../../feature/runout.h"
+#endif
+
 #if ENABLED(HOST_ACTION_COMMANDS)
   #include "../../feature/host_actions.h"
 #endif
@@ -80,7 +84,7 @@
 
 #define CORP_WEBSITE_E "github.com/Jyers"
 
-#define BUILD_NUMBER "1.1"
+#define BUILD_NUMBER "1.1.1"
 
 #define DWIN_FONT_MENU font8x16
 #define DWIN_FONT_STAT font10x20
@@ -156,7 +160,7 @@ bool printing = false;
 bool paused = false;
 bool sdprint = false;
 
-int16_t pausetemp, pausebed;
+int16_t pausetemp, pausebed, pausefan;
 
 bool liveadjust = false;
 bool bedonly = false;
@@ -178,11 +182,11 @@ inline void CrealityDWINClass::Draw_Float(float value, uint8_t row, bool selecte
   if (selected) bColor = Select_Color;
   else bColor = Color_Bg_Black;
   if (value < 0) {
-    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, bColor, 4-log10(minunit), log10(minunit), 202, MBASE(row), -value * minunit);
+    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, bColor, 5-log10(minunit), log10(minunit), 202, MBASE(row), -value * minunit);
     DWIN_Draw_String(false, true, DWIN_FONT_MENU, Color_White, bColor, 196, MBASE(row), F("-"));
   }
   else {
-    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, bColor, 4-log10(minunit), log10(minunit), 202, MBASE(row), value * minunit);
+    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, bColor, 5-log10(minunit), log10(minunit), 202, MBASE(row), value * minunit);
     DWIN_Draw_String(false, true, DWIN_FONT_MENU, Color_White, bColor, 196, MBASE(row), F(" "));
   }
 }
@@ -336,7 +340,7 @@ void CrealityDWINClass::Draw_Print_Screen() {
   Draw_Print_ProgressElapsed();
   Draw_Print_ProgressRemain();
   if (sdprint) {
-    char * const name = card.longest_filename();
+    char * const name = (card.isFileOpen()) ? card.longest_filename() : (char*)"";
     const int8_t npos = _MAX(0U, DWIN_WIDTH - strlen(name) * MENU_CHR_W) / 2;
     DWIN_Draw_String(false, false, DWIN_FONT_MENU, Color_White, Color_Bg_Black, npos, 60, name);
   }
@@ -519,7 +523,7 @@ void CrealityDWINClass::Draw_Status_Area(bool icons/*=false*/) {
   }
   if (current_position.z != z) {
     z = current_position.z;
-    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, Color_Bg_Black, 3, 2, 205, 459, current_position.z * 100);
+    DWIN_Draw_FloatValue(true, true, 0, DWIN_FONT_MENU, Color_White, Color_Bg_Black, 3, 2, 205, 459, (current_position.z < 0) ? 0 : current_position.z * 100);
   }
   DWIN_UpdateLCD();
 }
@@ -779,6 +783,8 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
         case MOVE_E:
           if (draw) {
             Draw_Menu_Item(row, ICON_Extruder, (char*)"Extruder");
+            current_position.e = 0;
+            sync_plan_position();
             Draw_Float(current_position.e, item);
           }
           else {
@@ -786,6 +792,8 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
               Popup_Handler(ETemp);
             }
             else {
+              current_position.e = 0;
+              sync_plan_position();
               Modify_Value(current_position.e, -500, 500, 10);
             }
           }
@@ -1112,7 +1120,7 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
             Draw_Menu_Item(row, ICON_ReadEEPROM, (char*)"Unload Filament");
           }
           else {
-            Popup_Handler(FilLoad, true);;
+            Popup_Handler(FilLoad, true);
             gcode.process_subcommands_now_P(PSTR("M702"));
             planner.synchronize();
             Draw_Menu(ChangeFilament, CHANGEFIL_UNLOAD);
@@ -1896,7 +1904,11 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
       #define ADVANCED_BACK 0
       #define ADVANCED_XOFFSET (ADVANCED_BACK + ENABLED(HAS_BED_PROBE))
       #define ADVANCED_YOFFSET (ADVANCED_XOFFSET + ENABLED(HAS_BED_PROBE))
-      #define ADVANCED_TOTAL ADVANCED_YOFFSET
+      #define ADVANCED_LOAD (ADVANCED_YOFFSET + ENABLED(ADVANCED_PAUSE_FEATURE))
+      #define ADVANCED_UNLOAD (ADVANCED_LOAD + ENABLED(ADVANCED_PAUSE_FEATURE))
+      #define ADVANCED_FILSENSORENABLED (ADVANCED_UNLOAD + ENABLED(FILAMENT_RUNOUT_SENSOR))
+      #define ADVANCED_FILSENSORDISTANCE (ADVANCED_FILSENSORENABLED + ENABLED(FILAMENT_RUNOUT_DISTANCE))
+      #define ADVANCED_TOTAL ADVANCED_FILSENSORDISTANCE
 
       switch (item) {
         case ADVANCED_BACK:
@@ -1910,22 +1922,69 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
         #if ENABLED(HAS_BED_PROBE)
         case ADVANCED_XOFFSET:
           if (draw) {
-            Draw_Menu_Item(row, ICON_SetEndTemp, (char*)"Probe X Offset");
+            Draw_Menu_Item(row, ICON_StepX, (char*)"Probe X Offset");
             Draw_Float(probe.offset.x, row, false, 10);
           }
           else {
-            Modify_Value(probe.offset.x, -50, 50, 10);
+            Modify_Value(probe.offset.x, -100, 100, 10);
           }
           break;
         case ADVANCED_YOFFSET:
           if (draw) {
-            Draw_Menu_Item(row, ICON_SetEndTemp, (char*)"Probe Y Offset");
+            Draw_Menu_Item(row, ICON_StepY, (char*)"Probe Y Offset");
             Draw_Float(probe.offset.y, row, false, 10);
           }
           else {
-            Modify_Value(probe.offset.y, -50, 50, 10);
+            Modify_Value(probe.offset.y, -100, 100, 10);
           }
           break;
+        #endif
+        #if ENABLED(ADVANCED_PAUSE_FEATURE)
+        case ADVANCED_LOAD:
+          if (draw) {
+            Draw_Menu_Item(row, ICON_WriteEEPROM, (char*)"Load Length");
+            Draw_Float(fc_settings[0].load_length, row, false, 1);
+          }
+          else {
+            Modify_Value(fc_settings[0].load_length, 0, EXTRUDE_MAXLENGTH, 1);
+          }
+          break;
+        case ADVANCED_UNLOAD:
+          if (draw) {
+            Draw_Menu_Item(row, ICON_ReadEEPROM, (char*)"Unload Length");
+            Draw_Float(fc_settings[0].unload_length, row, false, 1);
+          }
+          else {
+            Modify_Value(fc_settings[0].unload_length, 0, EXTRUDE_MAXLENGTH, 1);
+          }
+          break;
+        #endif
+        #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+        case ADVANCED_FILSENSORENABLED:
+          if (draw) {
+            if (ExtUI::getFilamentRunoutEnabled()) {
+              Draw_Menu_Item(row, ICON_Extruder, (char*)"Filament Sensor: Enabled");
+            }
+            else {
+              Draw_Menu_Item(row, ICON_Extruder, (char*)"Filament Sensor: Disabled");
+            }
+          }
+          else {
+            ExtUI::setFilamentRunoutEnabled(!ExtUI::getFilamentRunoutEnabled());
+            Draw_Menu(Advanced, ADVANCED_FILSENSORENABLED);
+          }
+          break;
+        #if ENABLED(FILAMENT_RUNOUT_DISTANCE)
+        case ADVANCED_FILSENSORDISTANCE:
+          if (draw) {
+            Draw_Menu_Item(row, ICON_MaxAccE, (char*)"Runout Distance");
+            Draw_Float(runout.runout_distance(), row, false, 10);
+          }
+          else {
+            Modify_Value(runout.runout_distance(), 0, 999, 10);
+          }
+          break;
+        #endif
         #endif
       }
       break;
@@ -1948,7 +2007,7 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
             DWIN_ICON_Show(ICON, ICON_Version, 26, MBASE(2) - 3);
             DWIN_Draw_Line(Line_Color, 16, MBASE(2) + 33, 256, MBASE(2) + 34);
 
-            DWIN_Draw_String(false, false, DWIN_FONT_MENU, Color_White, Color_Bg_Black, (DWIN_WIDTH - strlen("Build Number: " BUILD_NUMBER) * MENU_CHR_W) / 2, MBASE(3) - 1, (char*)"Build Number: " BUILD_NUMBER);
+            DWIN_Draw_String(false, false, DWIN_FONT_MENU, Color_White, Color_Bg_Black, (DWIN_WIDTH - strlen("Build Number: v" BUILD_NUMBER) * MENU_CHR_W) / 2, MBASE(3) - 1, (char*)"Build Number: v" BUILD_NUMBER);
             DWIN_ICON_Show(ICON, ICON_Version, 26, MBASE(3) - 3);
             DWIN_Draw_Line(Line_Color, 16, MBASE(3) + 33, 256, MBASE(3) + 34);
 
@@ -2062,7 +2121,8 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
       #define TUNE_ZUP (TUNE_ZOFFSET + ENABLED(HAS_ZOFFSET_ITEM))
       #define TUNE_ZDOWN (TUNE_ZUP + ENABLED(HAS_ZOFFSET_ITEM))
       #define TUNE_CHANGEFIL (TUNE_ZDOWN + ENABLED(FILAMENT_LOAD_UNLOAD_GCODES))
-      #define TUNE_TOTAL TUNE_CHANGEFIL
+      #define TUNE_FILSENSORENABLED (TUNE_CHANGEFIL + ENABLED(FILAMENT_RUNOUT_SENSOR))
+      #define TUNE_TOTAL TUNE_FILSENSORENABLED
 
       switch (item) {
         case TUNE_BACK:
@@ -2170,6 +2230,22 @@ void CrealityDWINClass::Menu_Item_Handler(uint8_t menu, uint8_t item, bool draw/
             gcode.process_subcommands_now_P(PSTR("M600 B1"));
             planner.synchronize();
             Draw_Menu(Tune, TUNE_CHANGEFIL);
+          }
+          break;
+        #endif
+        #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+        case TUNE_FILSENSORENABLED:
+          if (draw) {
+            if (ExtUI::getFilamentRunoutEnabled()) {
+              Draw_Menu_Item(row, ICON_Extruder, (char*)"Filament Sensor: Enabled");
+            }
+            else {
+              Draw_Menu_Item(row, ICON_Extruder, (char*)"Filament Sensor: Disabled");
+            }
+          }
+          else {
+            ExtUI::setFilamentRunoutEnabled(!ExtUI::getFilamentRunoutEnabled());
+            Draw_Menu(Tune, TUNE_FILSENSORENABLED);
           }
           break;
         #endif
@@ -2342,7 +2418,7 @@ void CrealityDWINClass::Popup_Handler(uint8_t popupid, bool option/*=false*/) {
       Draw_Popup((char*)"Leveling Complete", (char*)"Save to EEPROM?", (char*)"", Popup);
       break;
     case ETemp:
-      Draw_Popup((char*)"Nozzle is too cold", (char*)"Preheat to 200C?", (char*)"", Popup, ICON_TempTooLow);
+      Draw_Popup((char*)"Nozzle is too cold", (char*)"Preheat to 200C?", (char*)"", Popup);
       break;
     case Level:
       Draw_Popup((char*)"Auto Bed Leveling", (char*)"Please wait until done.", (char*)"", Wait, ICON_AutoLeveling);
@@ -2362,12 +2438,24 @@ void CrealityDWINClass::Popup_Handler(uint8_t popupid, bool option/*=false*/) {
     case TempWarn:
       Draw_Popup(option ? (char*)"Nozzle temp too low!" : (char*)"Nozzle temp too high!", (char*)"", (char*)"", Wait, option ? ICON_TempTooLow : ICON_TempTooHigh);
       break;
+    case Runout:
+      Draw_Popup((char*)"Filament Runout", (char*)"", (char*)"", Wait, ICON_BLTouch);
+      break;
+    case PidBadExtruder:
+      Draw_Popup((char*)"PID Autotune failed", (char*)"Bad extruder!", (char*)"", Confirm, ICON_BLTouch);
+      break;
+    case PidTimeout:
+      Draw_Popup((char*)"PID Autotune failed", (char*)"Timeout!", (char*)"", Confirm, ICON_BLTouch);
+      break;
+    case PidDone:
+      Draw_Popup((char*)"PID tuning done", (char*)"", (char*)"", Confirm, ICON_BLTouch);
+      break;
   }
 }
 
 void CrealityDWINClass::Confirm_Handler(const char * const msg) {
   last_menu = active_menu;
-  last_process = process;
+  if (process != Confirm) last_process = process;
   popup = UI;
   if (strcmp_P(msg, GET_TEXT(MSG_FILAMENT_CHANGE_INSERT)) == 0) {
     Draw_Popup((char*)"Insert Filament", (char*)"Press to Continue", (char*)"", Confirm);
@@ -2634,6 +2722,7 @@ inline void CrealityDWINClass::Print_Screen_Control() {
               gcode.process_subcommands_now_P(PSTR(cmnd));
               cmnd[sprintf(cmnd, "M109 S%i", pausetemp)] = '\0';
               gcode.process_subcommands_now_P(PSTR(cmnd));
+              thermalManager.fan_speed[0] = pausefan;
               planner.synchronize();
               queue.inject_P(PSTR("M24"));
             #endif
@@ -2688,6 +2777,7 @@ inline void CrealityDWINClass::Popup_Control() {
               queue.inject_P(PSTR("M25"));
               pausetemp = thermalManager.temp_hotend[0].target;
               pausebed = thermalManager.temp_bed.target;
+              pausefan = thermalManager.fan_speed[0];
               thermalManager.disable_all_heaters();
               thermalManager.zero_fan_speeds();
             #endif
@@ -2704,16 +2794,16 @@ inline void CrealityDWINClass::Popup_Control() {
       case Stop:
         if (selection==0) {
           if (sdprint) {
-            card.flag.abort_sd_printing = true; 
+            ExtUI::stopPrint();
             thermalManager.zero_fan_speeds();
             thermalManager.disable_all_heaters();
           }
           else {
             #if ENABLED(HOST_ACTION_COMMANDS)
               host_action_cancel();
+              Draw_Main_Menu();
             #endif
           }
-          Draw_Main_Menu();
         }
         else {
           Draw_Print_Screen();

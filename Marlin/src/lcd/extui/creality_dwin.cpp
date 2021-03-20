@@ -36,7 +36,7 @@ namespace ExtUI {
   void onMediaError() {}
   void onMediaRemoved() {}
   void onPlayTone(const uint16_t frequency, const uint16_t duration) {}
-  void onPrintTimerStarted() { CrealityDWIN.Start_Print(card.isFileOpen()); }
+  void onPrintTimerStarted() { CrealityDWIN.Start_Print(isPrintingFromMedia()); }
   void onPrintTimerPaused() {}
   void onPrintTimerStopped() { CrealityDWIN.Stop_Print(); }
   void onFilamentRunout(const extruder_t extruder) { CrealityDWIN.Popup_Handler(Runout); }
@@ -49,9 +49,13 @@ namespace ExtUI {
 
   void onFactoryReset() {}
 
-  void onStoreSettings(char *buff) {}
+  void onStoreSettings(char *buff) {
+    memcpy(buff, &CrealityDWIN.eeprom_settings, min(sizeof(CrealityDWIN.eeprom_settings), eeprom_data_size));
+  }
 
-  void onLoadSettings(const char *buff) {}
+  void onLoadSettings(const char *buff) {
+    memcpy(&CrealityDWIN.eeprom_settings, buff, min(sizeof(CrealityDWIN.eeprom_settings), eeprom_data_size));
+  }
 
   void onConfigurationStoreWritten(bool success) {}
 
@@ -77,16 +81,16 @@ namespace ExtUI {
     void onPidTuning(const result_t rst) {
       switch (rst) {
         case PID_BAD_EXTRUDER_NUM:
-          CrealityDWIN.Popup_Handler(PidBadExtruder);
+          CrealityDWIN.Confirm_Handler((char*)"Bad extruder number");
           break;
         case PID_TEMP_TOO_HIGH:
-          CrealityDWIN.Popup_Handler(TempWarn, true);
+          CrealityDWIN.Confirm_Handler((char*)"Temp too high");
           break;
         case PID_TUNING_TIMEOUT:
-          CrealityDWIN.Popup_Handler(PidTimeout);
+          CrealityDWIN.Confirm_Handler((char*)"PID Timout");
           break;
         case PID_DONE:
-          CrealityDWIN.Popup_Handler(PidDone);
+          CrealityDWIN.Confirm_Handler((char*)"PID Done");
           break;
       }
     }

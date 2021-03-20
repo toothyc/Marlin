@@ -1217,7 +1217,7 @@
  */
 #define FILAMENT_RUNOUT_SENSOR
 #if ENABLED(FILAMENT_RUNOUT_SENSOR)
-  #define FIL_RUNOUT_ENABLED_DEFAULT true // Enable the sensor on startup. Override with M412 followed by M500.
+  #define FIL_RUNOUT_ENABLED_DEFAULT false // Enable the sensor on startup. Override with M412 followed by M500.
   #define NUM_RUNOUT_SENSORS   1          // Number of sensors, up to one per extruder. Define a FIL_RUNOUT#_PIN for each.
 
   #define FIL_RUNOUT_STATE     HIGH        // Pin state indicating that filament is NOT present.
@@ -1264,7 +1264,7 @@
   // After a runout is detected, continue printing this length of filament
   // before executing the runout script. Useful for a sensor at the end of
   // a feed tube. Requires 4 bytes SRAM per sensor, plus 4 bytes overhead.
-  //#define FILAMENT_RUNOUT_DISTANCE_MM 25
+  #define FILAMENT_RUNOUT_DISTANCE_MM 0
 
   #ifdef FILAMENT_RUNOUT_DISTANCE_MM
     // Enable this option to use an encoder disc that toggles the runout pin
@@ -2274,6 +2274,13 @@
 // Ender-3 v2 OEM display. A DWIN display with Rotary Encoder.
 //
 #define CREALITY_DWIN_EXTUI
+#if ENABLED(CREALITY_DWIN_EXTUI)
+  //
+  // Enable custom icons
+  // NB: Requires Ender-3 v2 OEM display firmware update, or you will get blank icons!
+  //
+  //#define CREALITY_DWIN_EXTUI_CUSTOM_ICONS
+#endif
 
 //
 // Touch-screen LCD for Malyan M200/M300 printers
